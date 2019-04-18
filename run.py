@@ -53,6 +53,13 @@ class PageObject:
                 EC.presence_of_element_located((By.CSS_SELECTOR, css_selector)))
         except:
             raise NoSuchElementException("Not found: {}".format(css_selector))
+    
+    def _element_exists(self, css_selector):
+        try:
+            self.driver.find_element_by_css_selector(css_selector)
+            return True
+        except NoSuchElementException:
+            return False
 
 class PhotoIteratorPageObject(PageObject):
     def __init__(self, driver):
@@ -66,23 +73,8 @@ class PhotoIteratorPageObject(PageObject):
 
     def _get_src(self):
         try:
-            return self.driver.find_element_by_tag_name("body img").get_attribute("src")
-        except NoSuchElementException:
-            # Might be a video
-            video_link = self._get_element_of_type_with_href_matching_regex('a', '^\/video_redirect')
-            video_link.click()
-            video_link = self.driver.current_url()
-            return self.driver.find_element_by_tag_name("body img").get_attribute("src")
-
-
-    def _get_current_image(self):
-        try:
-            self._current_link().click()
-            date_string = self.driver.find_element_by_tag_name("abbr").text
-            date = self._parse_date(date_string)
-            formatted_date_string = "{:%Y_%m_%d}".format(date)
-
             self._get_element_by_text("View full size").click()
+            # Is an image
             time.sleep(0.1)
             tabs = self.driver.window_handles
             self.driver.switch_to.window(tabs[1])
@@ -90,7 +82,27 @@ class PhotoIteratorPageObject(PageObject):
             image_src = self.driver.find_element_by_tag_name("body img").get_attribute("src")
             self.driver.close()
             self.driver.switch_to.window(tabs[0])
-            return (image_src, formatted_date_string)
+            return image_src, 'jpg'
+        except NoSuchElementException:
+            # Might be a video
+            self._get_element_of_type_with_href_matching_regex('a', 'video_redirect').click()
+            time.sleep(0.1)
+            tabs = self.driver.window_handles
+            self.driver.switch_to.window(tabs[1])
+            self._wait_for_element("body video")
+            image_src = self.driver.current_url
+            self.driver.close()
+            self.driver.switch_to.window(tabs[0])
+            return image_src, 'mp4'
+
+    def _get_current_image(self):
+        try:
+            self._current_link().click()
+            date_string = self.driver.find_element_by_tag_name("abbr").text
+            date = self._parse_date(date_string)
+            image_src, file_type = self._get_src()
+            formatted_date_string = "{:%Y_%m_%d}".format(date)
+            return (image_src, formatted_date_string, file_type)
         except NoSuchElementException:
             raise NoSuchElementException("Error fetching image for url: {}".format(self.driver.current_url))
         finally:
@@ -175,12 +187,12 @@ count = 0
 
 try:
     iterator = page.get_photo_link_iterator()
-    for (link, name) in iterator:
+    for (link, name, filetype) in iterator:
         i = 0
-        full_name = "output/{}_{:0>3}.jpg".format(name, i)
+        full_name = "output/{}_{:0>3}.{}".format(name, i, filetype)
         while path.exists(full_name):
             i += 1
-            full_name = "output/{}_{:0>3}.jpg".format(name, i)
+            full_name = "output/{}_{:0>3}.{}".format(name, i, filetype)
 
         urllib.request.urlretrieve(link, full_name)
         count += 1
