@@ -10,10 +10,6 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "env": {
-                "FACEBOOK_USERNAME": "${FACEBOOK_USERNAME}",
-                "FACEBOOK_PASSWORD": "${FACEBOOK_PASSWORD}"
-            }
         },
         {
             "name": "Python: Attach",

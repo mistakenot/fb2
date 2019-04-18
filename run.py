@@ -3,14 +3,20 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 from os import environ, path
 import re
-import urllib
+import urllib.request
 import time
 import datetime
+import sys
+
+print(sys.version)
 
 user_name = environ["FACEBOOK_USERNAME"]
 password = environ["FACEBOOK_PASSWORD"]
+
+print("Logging in as {}.".format(user_name))
 
 class PageObject:
     def __init__(self, driver):
@@ -46,36 +52,65 @@ class PageObject:
             _ = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, css_selector)))
         except:
-            raise "Not found: {}".format(css_selector)
+            raise NoSuchElementException("Not found: {}".format(css_selector))
 
 class PhotoIteratorPageObject(PageObject):
     def __init__(self, driver):
         PageObject.__init__(self, driver)
         self.driver = driver
-        self.index = 0
+        self.index = -1
+        self.image_failed = []
 
     def __iter__(self):
         return self
 
-    def next(self):
-        if self._current_link() is None:
-            raise StopIteration()
+    def _get_src(self):
+        try:
+            return self.driver.find_element_by_tag_name("body img").get_attribute("src")
+        except NoSuchElementException:
+            # Might be a video
+            video_link = self._get_element_of_type_with_href_matching_regex('a', '^\/video_redirect')
+            video_link.click()
+            video_link = self.driver.current_url()
+            return self.driver.find_element_by_tag_name("body img").get_attribute("src")
 
-        self._current_link().click()
-        date_string = self.driver.find_element_by_tag_name("abbr").text
-        date = self._parse_date(date_string)
-        formatted_date_string = "{:%Y_%m_%d}".format(date)
-        self._get_element_by_text("View full size").click()
-        time.sleep(0.1)
-        tabs = self.driver.window_handles
-        self.driver.switch_to.window(tabs[1])
-        time.sleep(1)
-        image_src = self.driver.find_element_by_tag_name("img").get_attribute("src")
-        self.driver.close()
-        self.driver.switch_to.window(tabs[0])
-        self.driver.back()
-        self.index += 1
-        return (image_src, formatted_date_string)
+
+    def _get_current_image(self):
+        try:
+            self._current_link().click()
+            date_string = self.driver.find_element_by_tag_name("abbr").text
+            date = self._parse_date(date_string)
+            formatted_date_string = "{:%Y_%m_%d}".format(date)
+
+            self._get_element_by_text("View full size").click()
+            time.sleep(0.1)
+            tabs = self.driver.window_handles
+            self.driver.switch_to.window(tabs[1])
+            self._wait_for_element("body img")
+            image_src = self.driver.find_element_by_tag_name("body img").get_attribute("src")
+            self.driver.close()
+            self.driver.switch_to.window(tabs[0])
+            return (image_src, formatted_date_string)
+        except NoSuchElementException:
+            raise NoSuchElementException("Error fetching image for url: {}".format(self.driver.current_url))
+        finally:
+            self.driver.back()
+
+    def next(self):
+        while True:
+            self.index += 1
+            if self._current_link() is None:
+                break
+            try:
+                return self._get_current_image()
+            except NoSuchElementException as e:
+                print("Fetching image failed.")
+                print(e)
+                self.image_failed.append(e)
+
+        raise StopIteration()
+
+    __next__ = next
 
     def _parse_date(self, date_string):
         for fmt in ('%d %b %Y', '%d %B %Y'):
@@ -97,8 +132,9 @@ class PhotoIteratorPageObject(PageObject):
         return links[self.index]
 
     def _next_page(self):
-        next_page_link = self._get_element_by_text("See more photos")
-        if next_page_link is None:
+        try:
+            next_page_link = self._get_element_by_text("See more photos")
+        except NoSuchElementException:
             return False
         next_page_link.click()
         self.index = 0
@@ -137,22 +173,25 @@ page.login(user_name, password)
 page.go_to_photos()
 count = 0
 
-for (link, name) in page.get_photo_link_iterator():
-    i = 0
-    full_name = "output/{}_{}.jpg".format(name, i)
-    while path.exists(full_name):
-        i += 1
-        full_name = "output/{}_{}.jpg".format(name, i)
+try:
+    iterator = page.get_photo_link_iterator()
+    for (link, name) in iterator:
+        i = 0
+        full_name = "output/{}_{:0>3}.jpg".format(name, i)
+        while path.exists(full_name):
+            i += 1
+            full_name = "output/{}_{:0>3}.jpg".format(name, i)
 
-    urllib.urlretrieve(link, full_name)
-    print("Created {}.".format(full_name))
+        urllib.request.urlretrieve(link, full_name)
+        count += 1
+finally:
+    driver.close()
+    print("Downloaded {}.".format(count))
 
-print("done")
-# driver.get(facebook_login_url)
-# assert "Python" in driver.title
-# elem = driver.find_element_by_name("q")
-# elem.clear()
-# elem.send_keys("pycon")
-# elem.send_keys(Keys.RETURN)
-# assert "No results found." not in driver.page_source
-# driver.close()
+    if len(iterator.image_failed) > 0:
+        print("Errors:")
+        for error in iterator.image_failed:
+            print(error)
+
+
+print("Done.")
