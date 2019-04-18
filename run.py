@@ -15,6 +15,7 @@ print(sys.version)
 
 user_name = environ["FACEBOOK_USERNAME"]
 password = environ["FACEBOOK_PASSWORD"]
+start_url = environ.get("FACEBOOK_START_URL")
 
 print("Logging in as {}.".format(user_name))
 
@@ -75,7 +76,7 @@ class PhotoIteratorPageObject(PageObject):
         try:
             self._get_element_by_text("View full size").click()
             # Is an image
-            time.sleep(0.1)
+            time.sleep(0.2)
             tabs = self.driver.window_handles
             self.driver.switch_to.window(tabs[1])
             self._wait_for_element("body img")
@@ -168,7 +169,7 @@ class FacebookPageObject(PageObject):
         # self.driver.find_element_by_css_selector('a[href="/login/save-device/cancel/?flow=interstitial_nux&nux_source=regular_login"]').click()
         self._get_element_by_href("/login/save-device/cancel/?flow=interstitial_nux&nux_source=regular_login").click()
 
-    def go_to_photos(self, page=0):
+    def go_to_tagged_photos(self, page=0):
         self._get_element_by_text("Profile").click()
         self._get_element_by_text("Photos").click()
         element = self._get_element_of_type_with_text_matching_regex("a", "^See*")
@@ -176,13 +177,20 @@ class FacebookPageObject(PageObject):
         for _ in range(0, page):
             self.driver.find_element_by_css_selector("#m_more_item a").click()
 
+    def go_to_photo_start_url(self, url):
+        self.driver.get(url)
+
     def get_photo_link_iterator(self):
         return PhotoIteratorPageObject(self.driver)
 
 driver = webdriver.Firefox()
 page = FacebookPageObject(driver)
 page.login(user_name, password)
-page.go_to_photos()
+if start_url:
+    page.go_to_photo_start_url(start_url)
+else:
+    page.go_to_tagged_photos()
+
 count = 0
 
 try:
